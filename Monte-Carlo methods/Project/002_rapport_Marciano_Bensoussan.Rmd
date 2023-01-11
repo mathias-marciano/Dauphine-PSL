@@ -1,0 +1,696 @@
+---
+title: "Méthode de Monte Carlo - Projet"
+author: "Mathias Marciano - Samuel Bensoussan"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r, echo=FALSE}
+rm(list = ls())
+```
+
+## Préalable
+
+Nous utiliserons la graine 111 tout au long du projet :
+
+```{r}
+set.seed(111)
+```
+
+
+Importons Les librairies que nous allons utiliser :
+
+```{r}
+library(microbenchmark)
+```
+
+Définissons au préalable quelques fonctions qui nous seront utiles par la suite :
+
+```{r}
+#Estimateur de Monte Carlo classique
+estim_mc<-function(X, h = identity){
+  Y <- h(X)
+  sd <- var(Y)
+  return (data.frame(value = mean(Y), variance=sd))
+} 
+#Generateur de la loi normale multivariee dans le cas general
+rmvnorm<-function(n, mu, sigma){
+  z<-matrix(rnorm(length(mu)*n), nrow=length(mu))
+  return(mu + t(chol(sigma)) %*% z)
+}
+```
+
+## Exercice 1 *(Déambulation vers la sortie)*
+
+Dans cet exercice on considère la marche aléatoire suivante :
+$W_{m}= \begin{cases}0 & \text { si } m=0 \\ \sum_{k=1}^{m} X_{k} & \text { si } m \geq 1\end{cases}$ avec $\left(X_{n}\right)_{n \in \mathbb{N}}$ une suite de variables i.i.d. de loi $\mathcal{N}(\mu, 1), \mu \in \mathbb{R}_{-}^{*}$. 
+
+Cette marche aléatoire sera observée pendant une durée aléatoire
+$$
+T=\inf \left\{m \in \mathbb{N}^{*} \mid W_{m} \notin\right  ]a, b[ \}, \quad \text { avec } \quad a, b \in \mathbb{R} \text { tels que } a \leq 0<b .
+$$
+L'objectif de cet exercice est d'estimer la quantité $\delta=\mathbb{P}_{\mu}\left[W_{T} \geq b\right]$
+
+### Calculons $\widehat{\delta}_{n}$ et $\widehat{\Delta}_{n}(-\mu)$
+
+Rappel : nous avons vu aux questions 2 et 3 que :
+
+$\hat{\delta}{n}=\frac{1}{n} \sum_{i=1}^{n} 1\left\{\sum_{j=1}^{T_{i}} X_{i j} \geqslant b\right\}$ avec $X_{ij} \sim \mathcal{N}(\mu,1)$
+
+$\hat{\Delta}{n}(\theta)=\frac{1}{n} \sum_{i=1}^{n} 1\left\{\sum_{j=1}^{T_{i}} X_{i j} \geqslant b\right\} \prod_{j=1}^{T_{i}} \frac{f\left(X_{i j}\right)}{g\left(X_{i j}\right)}$ avec $X_{ij} \sim \mathcal{N}(\theta,1)$
+
+avec $W_{m}^{i}=\sum_{j=1}^{m} X_{i j}$ ; $T_{i}=\inf \left\{m \in \mathbb{N}^{*} \mid W_{m}^{i} \notin\right ]a, b[ \}$ ; $f \sim \mathcal{N}(\mu,1)$ et $g \sim \mathcal{N}(\theta,1)$
+
+Pour faire l'application numérique de ces estimateurs, il convient tout d'abord de définir les variables globales qui interviennent dans les expressions de ceux-ci :
+
+```{r}
+a<--3
+b<-5
+N<-10**6
+Mu<-(-1)
+```
+
+#### Question 5
+
+L'idée de l'algorihme du calcul de $\hat{\delta}{n}$ est de créer dans un premier temps une fonction qui nous renvoie n réalisations de la variable aléatoire $W_{m}^{i}$ :
+
+```{r}
+rgen_W<-function(n, mu, sd=1){
+  X<-rnorm(n,mu,sd)
+  l<-which(X<b & X>a) #indices de X qui ne respectent pas les conditions du temps d'arret
+  indice<-which(X>=b | X<=a) #indices qui respectent les conditions du temps d'arret
+  W<-X[indice] #On ajoute a notre vecteur W les "bons" X
+  while(length(which(X[l]<b & X[l]>a))>0){
+    X<-X[l]+rnorm(l, mu, sd) #La somme des X augmente de 1 terme
+    l<-which(X<b & X>a) #indices de X qui ne respectent pas les conditions du temps d'arret
+    indice<-which(X>=b | X<=a) #indices qui respectent le temps d'arret
+    W<-append(W, X[indice])
+  }
+  return(W)
+}
+```
+
+En effet, $\hat{\delta}{n}$ est une fonction de ($W_{m}^{1}$, $W_{m}^{2}$, ..., $W_{m}^{n}$) donc il suffit d'appliquer la fonction de l'estimateur de Monte Carlo classique au vecteur W :
+
+```{r}
+#Fonction indicatrice >=b
+h1<-function(x){
+  return(x>=5) 
+}
+delta_hat<-estim_mc(rgen_W(N, Mu), h1)
+```
+
+On obtient le résultat suivant :
+
+```{r, echo=FALSE}
+print(delta_hat)
+```
+
+La valeur de $\hat{\delta}{n}$ est "censé" être proche de 0 car l'événement $\left\{W_{m}^{i}\geqslant b\right\}$ est très peu réalisable. Par conséquent, la fonction h1 définie ci-dessus n'est pas nulle avec un probabilité très faible dès lors que $X_{ij} \sim \mathcal{N}(-1,1)$.
+Ici en pratique, on a choisi n de sorte que l'événement $\left\{W_{m}^{i}\geqslant b\right\}$ se produit plusieurs fois ce qui explique que $\hat{\delta}{n}$ n'est pas nulle.
+C'est pourquoi on opte pour la méthode d'échantillonnage préférentiel avec des $X_{ij} \sim \mathcal{N}(1,1)$. Ainsi, la fonction h1 ne sera pas nulle avec une faible probabilité car l'événement $\left\{W_{m}^{i}\geqslant b\right\}$ sera réalisable.
+
+Rappel : $\hat{\Delta}{n}(-\mu)=\frac{1}{n} \sum_{i=1}^{n} 1\left\{\sum_{j=1}^{T_{i}} X_{i j} \geqslant b\right\} \exp \left(2 \mu \sum_{y=1}^{T_{i}} X_{i j}\right)$
+
+On definit alors une fonction auxiliaire g qui nous permet d'utiliser la fonction estim_mc pour calculer $\hat{\Delta}{n}(-\mu)$ :
+
+```{r}
+g<-function(x, mu=-1){
+  return((x>=b)*exp(2*mu*x))
+}
+big_delta_hat<-estim_mc(rgen_W(N, -Mu), g)
+```
+
+qui renvoie comme résultat :
+
+```{r, echo=FALSE}
+print(big_delta_hat)
+```
+
+Le rapport des variances vaut alors :
+```{r, echo=FALSE}
+print(delta_hat$variance/big_delta_hat$variance)
+```
+La méthode d'échantillonnage préférentiel est donc une très bonne méthode de réduction de variance car on voit que le rapport ci-dessus est très important, de l'ordre de $10^{4}$.
+
+L'efficacité relative de  $\hat{\Delta}{n}(-\mu)$ par rapport à  $\hat{\delta}{n}$ est donné par : 
+
+$R\left(\hat{\delta_{n}}, \hat{\Delta_{n}}(-\mu)\right)=\frac{C_{1}}{C_{2}} \times \frac{\operatorname{Var}\left[\hat{\delta_{n}}\right]}{\operatorname{Var}\left[\hat{\Delta_{n}}(-\mu)\right]}$ avec $C_{1}$ le coût de calcul de  $\hat{\delta}{n}$ et $C_{2}$ le coût de calcul de $\hat{\Delta}{n}(-\mu)$
+Calculons maintenant le coût de calcul de chaque méthode :
+
+```{r}
+#Cout de calcul des méthodes
+tme = microbenchmark(estim_mc(rgen_W(N, Mu), h1), estim_mc(rgen_W(N, -Mu), g))
+
+C1<-mean(tme$time[tme$expr=="estim_mc(rgen_W(N, Mu), h1)"]) #Cout de calcul pour delta_hat
+C2<-mean(tme$time[tme$expr=="estim_mc(rgen_W(N, -Mu), g)"]) #Cout de calcul pour big_delta_hat
+efficacite_relative<-C1*(delta_hat$variance)/(C2*big_delta_hat$variance)
+```
+
+L'efficacité relative est de l'ordre de $10^{4}$ :
+
+```{r, echo=FALSE}
+print(efficacite_relative)
+```
+
+On remarque que le rapport des coûts de calcul vaut :
+```{r, echo=FALSE}
+print(C1/C2)
+```
+Ce rapport influe très peu sur l'efficacité relative : on comprend dès lors que c'est le rapport des variances qui va déterminer cette efficacité. 
+Conclusion : $\hat{\Delta}{n}(-\mu)$ est un **meilleur estimateur** que $\hat{\delta}{n}$ en particulier car la méthode d'échantillonnage préférentiel est une très bonne méthode de réduction de variance dans ce problème.
+
+
+
+
+## Exercice 2 *(Recettes de financier)*
+### Partie 1
+Dans cette partie, on reconsidère la marche aléatoire $\left(W_{n}\right)_{n \in \mathbb{N}}$ introduite dans l'Exercice 1 à la différence que $T \in \mathbb{N}^{*}$ est fixé. L'objectif ici est déterminer la quantité : 
+
+$\delta=\mathbb{E}\left[\max \left\{\lambda \exp \left(-\sigma W_{T}\right)-K, 0\right\}\right], \quad$ avec $\quad \lambda, \sigma, K \in \mathbb{R}_{+}^{*}$
+
+Définissons les variables qui vont nous être utile pour les applications numériques de cette partie :
+```{r}
+Mu = -1
+t = 91
+lambda = 30.63
+Sd = 0.01
+K = 72.36
+N = 10**5
+```
+#### Question 1-b)
+Rappel : dans la question 1-a), nous avons montré que $W_{T} \sim \mathcal{N}(\mu T,T)$ et que l'estimateur de Monte Carlo classique de $\delta$ est donné par :
+$\hat{\delta}{n}=\frac{1}{n} \sum_{i=1}^{n} \max \left\{\lambda \exp \left(-\sigma Y_{i}\right)-K, 0\right\}$ avec $Y_{i} \stackrel{iid}{\sim} \mathcal{N}(\mu T,T)$
+On définit la fonction $h2(x)=\max \left\{\lambda \exp \left(-\sigma x\right)-K, 0\right\}$ qui va nous servir pour calculer $\hat{\delta}{n}$ à l'aide de *estim_mc* :
+```{r}
+h2<-function(x){
+  return(pmax(lambda*exp(-Sd*x)-K,0))
+}
+```
+On utilise la fonction *pmax* et non pas *max* car on va manipuler des vecteurs.
+De plus, étant donné que $h2(X)=\max \left\{\lambda \exp \left(-\sigma X\right)-K, 0\right\}$ est de carré intégrable et que $\hat{\delta}{n}$ est un estimateur sans biais de $\delta$, d'après le cours on a montré que l'erreur quadratique moyenne relativement à $\delta$ est donné par : $\operatorname{MSE}\left(\hat{{\delta}}{n}, \delta\right)=\operatorname{Var} \frac{\left[h{2}\left(Y_{1}\right)\right]}{n}=\operatorname{Var}\left[\hat{\delta}_{n}\right]$ avec $Y_{1} \sim \mathcal{N}(\mu T,T)$
+
+On peut dès lors modifier notre fonction *estim_mc* et renvoyer comme donnée supplémentaire le  $\operatorname{MSE}\left(\hat{{\delta}}{n}, \delta\right)$ :
+```{r}
+#Estimateur de Monte Carlo classique
+estim_mc<-function(X, h = identity){
+  Y <- h(X)
+  sd <- var(Y)
+  return (data.frame(value = mean(Y), variance=sd, MSE=sd/length(X)))
+} 
+```
+Ce qui nous renvoie finalement :
+```{r, echo=FALSE}
+d_n<-estim_mc((rnorm(N, Mu*t, sqrt(t))), h2)
+print(d_n)
+```
+avec un MSE de l'ordre de $3 \times 10^{-4}$
+
+#### Question 2-b)
+Rappel : on a utilisé la transformation $A(x)=2 \mu T-x$ pour laisser la loi $\nu$ invariante et on a obtenu un nouvel estimateur par la méthode de la variable antithétique donné par : $\hat{\delta_{n}}(A)=\frac{1}{n} \sum_{i=1}^{n} \frac{h_{2}\left(Y_{i}\right)+h_{2} \circ A\left(Y_{i}\right)}{2}$
+
+De même que dans l'exercice 1, on code une fonction auxiliaire h3 pour utiliser la fonction *estim_mc* et éviter de surcharger notre code :
+```{r}
+A<-function(x){
+  return(2*Mu*t - x)
+}
+h3<-function(x){
+  return((h2(x)+h2(A(x)))/2)
+}
+```
+Ainsi, $\hat{\delta_{n}}(A)$ est donné par :
+```{r}
+d_n_hat_A<-estim_mc(rnorm(N, Mu*t, sqrt(t)), h3)
+```
+qui renvoie :
+```{r, echo=FALSE}
+print(d_n_hat_A)
+```
+La variance est le MSE sont ici plus faible que précèdemment ce qui est cohérent car la méthode de la variable antithétique est une méthode de réduction de variance.
+
+#### Question 3
+
+De la même manière que l'exercice 1, l'efficacité relative de  $\hat{\delta}{n}(A)$ par rapport à  $\hat{\delta}{n}$ est donné par : 
+
+$R\left(\hat{\delta_{n}}, \hat{\delta_{n}}(A)\right)=\frac{C_{1}}{C_{2}} \times \frac{\operatorname{Var}\left[\hat{\delta_{n}}\right]}{\operatorname{Var}\left[\hat{\delta_{n}}(A)\right]}$ avec $C_{1}$ le coût de calcul de  $\hat{\delta}{n}$ et $C_{2}$ le coût de calcul de $\hat{\delta}{n}(A)$
+
+Calculons maintenant le coût de calcul de chaque méthode :
+
+```{r}
+#Cout de calcul des méthodes
+tme = microbenchmark(estim_mc((rnorm(N, Mu*t, sqrt(t))), h2), 
+                     estim_mc(rnorm(N, Mu*t, sqrt(t)), h3))
+#Cout de calcul pour d_n
+C1<-mean(tme$time[tme$expr=="estim_mc((rnorm(N, Mu * t, sqrt(t))), h2)"])
+#Cout de calcul pour d_n_hat_A
+C2<-mean(tme$time[tme$expr=="estim_mc(rnorm(N, Mu * t, sqrt(t)), h3)"])
+
+efficacite_relative<-C1*(d_n$variance)/(C2*d_n_hat_A$variance)
+```
+
+<br />
+Temps de calcul de $\hat{\delta}{n}$ (première entrée) et $\hat{\delta}{n}(A)$ (deuxième entrée) :
+```{r, echo=FALSE}
+print(tme)
+```
+
+L'efficacité relative vaut :
+
+```{r, echo=FALSE}
+print(efficacite_relative)
+```
+
+On remarque que le rapport des coûts de calcul vaut :
+```{r, echo=FALSE}
+print(C1/C2)
+```
+
+De la même façon que l'exercice 1, le rapport des variances qui est de :
+```{r, echo=FALSE}
+print((d_n$variance)/(d_n_hat_A$variance))
+```
+est dominant par rapport au terme des coûts dans l'efficacité relative car il vaut 10 fois ce dernier.
+Conclusion : l'efficacité relative étant supérieur à 1, $\hat{\delta}{n}(A)$ est un **meilleur estimateur** que $\hat{\delta}{n}$. Ici encore, c'est grâce au fait qu'on a utilisé la méthode de la variable antithétique qui permet de réduire la variance du nouvel estimateur.
+
+### Partie 2
+#### Question 3
+Soit $\mathbf{X}=\left(X_{1}, \ldots, X_{d}\right)$ un vecteur gaussien de $\mathbb{R}^{d}$. L'objectif de cette partie est d'estimer la quantité :
+$p=\mathbb{E}\left[\max \left\{\frac{1}{d} \sum_{i=1}^{d} \exp \left(\sigma X_{i}\right)-K, 0\right\}\right], \quad$ avec $\quad \sigma, K \in \mathbb{R}_{+}^{*}$
+
+
+
+### Partie 2
+Soit $\mathbf{X}=\left(X_{1}, \ldots, X_{d}\right)$ un vecteur gaussien de $\mathbb{R}^{d}$. L'objectif de cette partie est d'estimer la quantité :
+$p=\mathbb{E}\left[\max \left\{\frac{1}{d} \sum_{i=1}^{d} \exp \left(\sigma X_{i}\right)-K, 0\right\}\right], \quad$ avec $\quad \sigma, K \in \mathbb{R}_{+}^{*}$
+
+#### Question 4-b)
+Rappel : dans la question 4-a) nous avons montré que l'estimateur de Monte Carlo classique est donné par  ${J}$ :
+
+$\widehat J_{n}=\frac{1}{n} \sum_{i=1}^{n} \max \left\{ \lambda_1 \exp \left(\sigma_{1} X_{1i}\right) + \lambda_2 \exp \left(\sigma_{2} X_{2i}\right) -K, 0\right\}$ avec $\left(X_{i}=\left(X_{1 i}, X_{2i}\right)\right)_{i \in[1, n]}$ suite de variables aléatoires iid suivant la loi de X.
+
+Définissons les variables globales qui vont intervenir dans notre code :
+```{r}
+K = 67.8
+Mu = c(0,0)
+ro = -0.72
+l1 = 32
+l2 = 35.9
+sd1 = 0.5
+sd2 = 0.3
+N = 10**4
+sigma=matrix(c(1,ro,ro,1), nrow=2)
+```
+
+Codons dans R la fonction $h_{4}(X_{1}, X_{2}) = \max \left\{\lambda_1 \exp \left(\sigma_{1} X_{1}\right) + \lambda_2 \exp \left(\sigma_{2} X_{2i}\right) -K, 0\right\}$ associé à l'estimateur de Monte Carlo classique de ${J}$ :
+
+```{r}
+h4<-function(x1,x2){
+  return(pmax(l1*exp(-sd1*x1)+l2*exp(-sd2*x2)-K, 0))
+}
+```
+
+L'estimateur de Monte Carlo classique est donné par le code suivant :
+
+```{r}
+#On renvoie par defaut un intervalle de confiance a un niveau de 90%
+J_n_hat = function(n, alpha=0.1){ 
+  #On genere n vecteurs gaussiens de R2 sous forme de matrice   
+  X<-rmvnorm(n, Mu, sigma)
+  X1<-X[1,] #correspond aux X1i
+  X2<-X[2,] #correspond aux X2i
+  A<-pmax(l1*exp(-sd1*X1)+ l2*exp(-sd2*X2)-K,0)
+  J_hat<-mean(A)
+  sd<-var(A)
+  q<-qnorm(1 - alpha/2) * sqrt(sd/n)
+  return(data.frame(value=J_hat, variance=sd, ic_inf=J_hat - q, ic_sup=J_hat + q))
+}
+```
+
+La forme de l'intervalle de confiance a été démontré en cours à l'aide du théorème centrale limite et du théorème de Slutsky. Il est de la forme :
+
+$\left[\widehat{J}_{n}-q_{1-\frac{\alpha}{2}} \sqrt{\frac{\widehat{\sigma}_{n}}{n}} ; \widehat{J}_{n} + q_{1-\frac{\alpha}{2}} \sqrt{\frac{\widehat{\sigma}_{n}}{n}}\right]$
+
+avec $\widehat{\sigma}_{n}$ la variance empirique de $h_{4}(X_{1}, X_{2})$.
+
+Résultats obtenus pour l'estimateur et l'intervalle de confiance :
+
+```{r, echo=FALSE}
+J_hat<-J_n_hat(N)
+print(J_hat)
+```
+
+Avec un temps de calcul de :
+
+```{r, echo=FALSE}
+print(microbenchmark(J_n_hat(N)))
+```
+
+La variance de cet estimateur est particulièrement élevée c'est pourquoi on va recourir à une méthode de réduction de variance.
+
+#### Question 5-b)
+On a montré précèdemment que : $\mathbb{E}\left[\lambda_{1} \exp \left(-\sigma_{1} x_{1}\right)+\lambda_{2} \exp \left(-\sigma_{2} x_{2}\right)\right]=\lambda_{1} \exp \left(\sigma_{1}^{2}/2)+\lambda_{2} \exp \left(\sigma_{2}^{2}/2)\right.\right.$
+La méthode de contrôle consiste à choisir une fonction $h_{0}$ telle que $\mathbb{E}\left[h_{0}(\mathbf{X})\right]=m$ soit facile à calculer et $\operatorname{Var}\left[h_{0}(\mathbf{X})\right]<+\infty$. On nous incite dans l'énoncé à travers les calculs d'espérance faits précèdemment à prendre comme fonction : $h_{0}(X_{1},X_{2})=\lambda_{1} \exp \left(-\sigma_{1} X_{1}\right)+\lambda_{2} \exp \left(-\sigma_{2} X_{2}\right) - K$ qui est de variance finie. On a ainsi par linéarité de l'espérance :
+$m=\lambda_{1} \exp (\sigma_{1}^{2}/2)+\lambda_{2} \exp (\sigma_{2}^{2}/2) - K$
+
+Ajoutons-les à notre code :
+
+```{r}
+h0 <- function(x1,x2){
+  return(l1*exp(-sd1*x1)+l2*exp(-sd2*x2)-K)
+}
+m<-l1*exp((sd1**2)/2)+l2*exp((sd2**2)/2)-K
+```
+
+
+L'estimateur de ${J}$ par la méthode de la variable de contrôle est donné par :
+
+$\widehat{J}_{n}(b)=\frac{1}{n} \sum_{k=1}^{n}\left\{h\left(\mathbf{X}_{k}\right)-b\left[h_{0}\left(\mathbf{X}_{k}\right)-m\right]\right\}$
+
+#### Etape 1 : déterminer le b optimal
+Nous allons déterminer le b optimal en appliquant la **Stratégie n°1** du cours qui est la période de chauffe : on génére une suite $\left(\mathbf{X}_{n}\right)_{n \geq 1}$ de variables aléatoires iid suivant la loi de ${X}$, on utilise les l premiers termes de cette suite pour déterminer le b optimal puis enfin on utilise les n-l termes restants de la suite pour estimer ${J}$.
+Pour déterminer le nombre l de termes à choisir, on va faire varier l de 1 à N tout en estimant le b optimal à l'aide la formule :
+
+$\widehat{b}_{\ell}^{\star}=\frac{\sum_{k=1}^{\ell}\left(h_{0}\left(\mathbf{X}_{k}\right)-m\right)\left(h\left(\mathbf{X}_{k}\right)-\bar{h}_{\ell}\right)}{\sum_{k=1}^{\ell}\left(h_{0}\left(\mathbf{X}_{k}\right)-m\right)^{2}}$
+
+Le l sera déterminé dès lors que la valeur de $\widehat{b}_{\ell}^{\star}$ se stabilise.
+
+#### Etape 2 : calculer l'estimateur
+
+Nous avons maintenant toutes les outils pour coder l'estimateur efficacement :
+
+```{r}
+b_opti_l <- function(n){
+  #On stocke les valeurs de b optimal pour chaque l dans un vecteur
+  B<-numeric(n)
+  for(l in 1:n){
+    X<-rmvnorm(l, Mu, sigma)
+    #On restranscrit exactement la formule enonce precedemment
+    h_l<-mean(h4(X[1,],X[2,]))
+    numerateur<-(h4(X[1,],X[2,])-m)*(h0(X[1,],X[2,])-h_l)
+    numerateur<-sum(numerateur)
+    denominateur<-sum((h0(X[1,],X[2,])-m)**2)
+    B[l]<-numerateur/denominateur
+  }
+  return(B)
+}
+```
+
+Puis on trace les valeurs de $\widehat{b}_{\ell}^{\star}$ en fonction de l : 
+
+```{r}
+B<-b_opti_l(N)
+plot(B, type="l", xlab="L", ylab="b_optimal", ylim=c(0,2))
+```
+
+Faisons un zoom :
+
+```{r, echo=FALSE}
+plot(B, type="l", xlab="L", ylab="b_optimal", xlim=c(0,1000), ylim=c(0,2))
+```
+
+On observe que $\widehat{b}_{\ell}^{\star}$ se stabilise en oscillant autour de 0.8 à environ $l=200$ : c'est donc cette valeur que nous allons choisir.
+
+```{r}
+#Fonction qui renvoie le b_optimal en utilisant le l-echantillon associe
+b_opti <- function(n, X){ 
+  m<-l1*exp((sd1**2)/2)+l2*exp((sd2**2)/2)-K
+  h_l<-mean(h4(X[1,],X[2,]))
+  numerateur<-sum((h4(X[1,],X[2,])-m)*(h0(X[1,],X[2,])-h_l))
+  denominateur<-sum((h0(X[1,],X[2,])-m)**2)
+  return(numerateur/denominateur)
+}
+
+J_hat_b<-function(n, alpha=0.1){
+  X<-rmvnorm(n, Mu, sigma)
+  m<-l1*exp((sd1**2)/2)+l2*exp((sd2**2)/2)-K
+  l<-200 #Nombre de termes utilises pour estimer b_optimal
+  b<-b_opti(l, X[,1:l]) #On utilise les l premiers termes de Xn pour generer b
+  X<-X[,(l+1):n] #On garde ensuite seulement les n-l termes pour Jn(b)
+  J<-h4(X[1,],X[2,])-b*(h0(X[1,],X[2,])-m)
+  J_hat<-mean(J)
+  sd<-var(J)
+  q<-qnorm(1 - alpha/2) * sqrt(sd/n)
+  return(data.frame(value=J_hat, variance=sd, ic_inf=J_hat - q, ic_sup=J_hat + q))
+}
+```
+
+Les résultats obtenus sont les suivants :
+
+```{r, echo=FALSE}
+J_n_hat_b<-J_hat_b(N)
+print(J_n_hat_b)
+```
+
+Avec un temps de calcul de :
+
+```{r, echo=FALSE}
+print(microbenchmark(J_hat_b(N)))
+```
+
+#### Question 6
+
+De la même manière que les exercices précèdemment, l'efficacité relative de  $\widehat{J}_{n}(b)$ par rapport à  $\widehat{J}_{n}$ est donné par : 
+
+$R\left(\widehat{J_{n}}, \widehat{J_{n}}(b)\right)=\frac{C_{1}}{C_{2}} \times \frac{\operatorname{Var}\left[\widehat{J_{n}}\right]}{\operatorname{Var}\left[\widehat{J_{n}}(b)\right]}$ avec $C_{1}$ le coût de calcul de  $\widehat{J}_{n}$ et $C_{2}$ le coût de calcul de $\widehat{J}_{n}(b)$
+
+Calculons maintenant le coût de calcul de chaque méthode :
+
+```{r}
+#Cout de calcul des méthodes
+tme = microbenchmark(J_n_hat(N), J_hat_b(N))
+#Cout de calcul pour d_n
+C1<-mean(tme$time[tme$expr=="J_n_hat(N)"])
+#Cout de calcul pour d_n_hat_A
+C2<-mean(tme$time[tme$expr=="J_hat_b(N)"])
+
+efficacite_relative<-C1*(J_hat$variance)/(C2*J_n_hat_b$variance)
+```
+
+Temps de calcul de $\widehat{J}_{n}$ (première entrée) et $\widehat{J}_{n}(b)$ (deuxième entrée) :
+
+```{r, echo=FALSE}
+print(tme)
+```
+
+L'efficacité relative vaut :
+
+```{r, echo=FALSE}
+print(efficacite_relative)
+```
+
+On remarque que le rapport des coûts de calcul vaut :
+
+```{r, echo=FALSE}
+print(C1/C2)
+```
+
+De la même façon que l'exercice 1, le rapport des variances qui est de :
+```{r, echo=FALSE}
+print((J_hat$variance)/(J_n_hat_b$variance))
+```
+est dominant par rapport au terme des coûts dans l'efficacité relative car il vaut environ 20 fois ce dernier.
+
+Conclusion : l'efficacité relative étant supérieur à 1, $\widehat{J}_{n}(b)$ est un **meilleur estimateur** que $\widehat{J}_{n}$. Ici encore, utiliser la méthode de la variable de contrôle comme méthode de réduction de variance est un bon compromis pour estimer ${J}$ par rapport à l'estimateur de Monte Carlo classique 
+
+
+
+### Partie 3
+
+Les variables globales suivantes seront utiles pour les applications numériques de cette partie :
+
+```{r}
+d<-10
+Sd<-0.5
+K<-1.17
+N<-10**5
+L<-40
+```
+
+
+Dans cette dernière partie, nous voulons estimer :
+
+$p=\mathbb{E}\left[\max \left\{\frac{1}{d} \sum_{i=1}^{d} \exp \left(\sigma X_{i}\right)-K, 0\right\}\right]$ avec $\sigma, K \in \mathbb{R}_{+}^{*}$ et $\mathbf{X}=\left(X_{1}, \ldots, X_{d}\right)$ un vecteur gaussien standard de $\mathbb{R}^{d}$.
+
+#### Question 7
+Soit ${X}_{j}=\left(X_{1j}, \ldots, X_{dj}\right)$ avec $j \in \mathbb{[} 1 ; n]$ un vecteur gaussien standard de $\mathbb{R}^{d}$. L'estimateur de Monte Carlo classique de p est donnée par :
+
+$\widehat{p_{n}}=\frac{1}{n} \sum_{j=1}^{n} \max \left\{\frac{1}{d} \sum_{i=1}^{d} \exp \left(\sigma X_{i j}\right)-K, 0\right\}$
+
+L'idée de l'algorithme de $\widehat{p_{n}}$ est de générer une matrice $n \times d$ où chaque ligne de cette dernière correspond à un vecteur gaussien standard de $\mathbb{R}^{d}$. Ensuite, il nous suffit d'appliquer $exp(\sigma x)$ à la matrice concernée et d'obtenir la moyenne de chacun de ces lignes.
+
+Introduisons une fonction auxiliaire h5 présente dans l'estimateur de Monte Carlo classique :
+```{r}
+h5<-function(x){
+  return(pmax(x-K,0))
+}
+```
+
+Il en découle le code suivant pour estimer $\widehat{p_{n}}$ : 
+```{r}
+p_hat<-function(n){
+  X<-matrix(rnorm(n*d), nrow=n)
+  X<-exp(Sd*X)
+  #Renvoie un vecteur qui contient la moyenne de chaque ligne de la matrice
+  X<-rowMeans(X) 
+  return(estim_mc(X, h5))
+}
+p_n_hat<-p_hat(N)
+```
+
+Voici le résultat obtenu :
+
+```{r, echo=FALSE}
+print(p_n_hat)
+```
+
+Avec un temps de :
+
+```{r, echo=FALSE}
+print(microbenchmark(p_hat(N)))
+```
+
+On note la faible variance de l'estimateur de Monte Carlo classique par rapport à ce qu'on a vu précèdemment.
+
+#### Question 10-b)
+
+Rappel : dans la question 10-a), nous avons pris la partition suivante qui va nous servir de strates :
+
+$\left.\left.\left.D_{1}=\right]-\infty, q_{1 / L}\right]; D_{L}=\right] q_\frac{L-1}{L} ;+\infty[$ et $\left.\left.\quad \forall i \in[2 ; L-1], \quad D_{i}=\right] q_{\frac{i-1}{L}} ; q_{\frac{i}{L}}\right]$
+
+avec $q_{i}$ quantile d'ordre i de la loi normale centrée réduite.
+
+Dans cette partie, nous sommes dans le cas d'un estimateur stratifié avec allocation proportionnelle car pour $\ell \in  [1, L], \mathbb{P}\left[<\mathbf{X}, u>\in D_{\ell}\right]=1 / L$ donc le nombre de tirage de la loi conditionnelle $L\left(<\mathbf{X}, u> \mid <\mathbf{X}, u> \in D_{k}\right)$ pour chaque $k=1, \ldots, K$ sera identique avec une valeur de $\frac{n}{L}$.
+Ainsi, notre estimateur stratifié est de la forme :
+
+$\widehat{p}_{n}\left(\frac{n}{L}, \ldots, \frac{n}{L}\right)(u)=\sum_{l=1}^{L} \frac{1}{L} \sum_{i=1}^{n/L} h_{6}\left(\mathbf{Y}_{i}^{(l)}, u \right)$ avec $\mathbf{Y}_{i}^{(l)}$ une réalisation de la loi $L\left(<\mathbf{X}, u> \mid <\mathbf{X}, u> \in D_{l}\right)$ et $h_{6}(x,u) = \max \left\{\frac{1}{d} \sum_{i=1}^{d} \exp \left[\sigma\left(x u_{i}+Z_{i}-<\mathbf{Z}, u>u_{i}\right)\right]-K, 0\right\}$ avec $Z$ vecteur gaussien standard de dimension d.
+
+#### Etape 1 : simuler $\mathbf{Y}_{i}^{(l)}$
+
+Pour simuler $\mathbf{Y}_{i}^{(l)}$, nous allons appliquer une formule du cours qui invoque l'inverse généralisé et la fonction de répartition de notre loi normale centrée réduite. Dans notre cas, cela donne :
+
+$\mathbf{Y}_{i}^{(l)}=F^{\leftarrow}\left[F\left(d_{l}\right)+U\left\{F\left(d_{l+1}\right)-F\left(d_{l}\right)\right\}\right], l=1, \ldots, L$ avec $d_{1}=-\infty ; \quad d_{L+1}=+\infty;$ 
+$\forall l=1, \ldots L : \quad d_{\ell}=\frac{q_{l-1}}{L}$ et $U \sim U([0,1])$
+
+Ce qui donne dans notre cas :
+$\mathbf{Y}_{i}^{(l)}=F^{\leftarrow}\left[d_{l}+U\left\{d_{l+1}-d_{l}\right\}\right]$ 
+car $F$ est continue
+
+Ce qui implique :
+$\mathbf{Y}_{i}^{(l)}=F^{\leftarrow}\left[\frac{l-1}{L}+U\left\{\frac{1}{L}\right\}\right]$
+
+Codons ainsi une fonction qui nous renvoie un vecteur contenant n réalisations de $\mathbf{Y}^{(l)}$ : 
+```{r}
+rgen_Y<-function(n, l){
+  U<-runif(n)
+  Y<-qnorm((l-1+U)/L)
+  return(Y)
+}
+```
+
+#### Etape 2 : générer $\widehat{p}_{n}$
+
+La plus grande difficulté de cette partie consiste à générer $\widehat{p}_{n}$ avec un code efficace qui n'utilise qu'un seul for. La première solution "naïve" que nous avions était de code la fonction $h_{6}$ de façon vectorielle comme voici :
+
+```{r}
+h6_faux<-function(Y_l, u, Z){
+  Z_scalaire_u<-Z%*%u
+  X<-mean(exp(sd*(Y_l*u + Z - Z_scalaire_u[1] * u)))
+  return(pmax(X-K, 0))
+}
+```
+
+
+Puis pour une strate fixé $l$ de générer $\frac{n}{L}$ réalisations de $\mathbf{Y}^{(l)}$ et d'appliquer la fonction $h_{6}$ à ce vecteur de réalisations pour pouvoir estimer la partie de la formule de l'estimateur $\sum_{i=1}^{n/L} h_{6}\left(\mathbf{Y}_{i}^{(l)}, u \right)$. Cependant, un problème ce soulève car si $\mathbf{Y}^{(l)}$ devient un vecteur et non plus un scalaire dans la fonction $h_{6}$, le terme $Y_{l}u$ devient alors une opération entre deux vecteurs en particulier la multiplication composante par composante qui n'est pas ce que nous souhaitons.
+
+C'est pourquoi il préférable d'avoir une méthode "matricielle" pour coder l'estimateur stratifié $\widehat{p}_{n}$. L'idée est d'obtenir le terme avec la somme de la fonction h6 sous forme de matrice comme ceci :
+
+$\includegraphics{matrice.png}$
+
+Puis on additionne chaque terme de cette matrice par une matrice dont chaque terme est la réalisation d'une loi $N(0,1)$ et par le même principe on détermine le terme $<\mathbf{Z}, u>u_{i}$.
+
+Concernant l'estimation de la variance de la méthode, comme les $\mathbf{Y}^{(l)}$ sont indépendants (entre les strates et à l'intérieur de celles-ci) et identiquement distribuées à l'intérieur d'une strate, nous avons en reprenant les notations du cours :
+
+$\widehat{\sigma}_{n}^{2}\left(q_{1}, \ldots, q_{K}\right)=\sum_{l=1}^{L} \frac{p_{l}^{2}}{q_{l}} \frac{1}{n_{l}-1} \sum_{i=1}^{n_{l}}\left\{h\left(\mathbf{Y}_{i}^{(l)}\right)-\frac{1}{n_{l}} \sum_{j=1}^{n_{l}} h\left(\mathbf{Y}_{j}^{(l)}\right)\right\}^{2}$
+
+Le terme  $\frac{1}{n_{l}-1} \sum_{i=1}^{n_{l}}\left\{h\left(\mathbf{Y}_{i}^{(l)}\right)-\frac{1}{n_{l}} \sum_{j=1}^{n_{l}} h\left(\mathbf{Y}_{j}^{(l)}\right)\right\}^{2}$ est facilement déterminé en utilisant la fonction *var* au vecteur $Y^{(l)}$ et le rapport $\frac{p_{l}^{2}}{q_{l}}$ vaut toujours $\frac{1}{L}$ ce qui revient à stocker les variances empiriques de chaque $Y^{(l)}$ dans un vecteur puis de faire la moyenne en utilisant *mean*.
+
+On débouche ainsi au code final :
+
+```{r}
+p_hat_strat<-function(n){
+  P<-matrix(numeric(n), nrow=L)
+  u<-rep(1,d)
+  u<-u/sqrt(sum(u**2))
+  S<-0
+  Variance<-numeric(L)
+  for(i in 1:L){
+    Y_l<-rgen_Y((n/L),i) #matrice de taille n/L
+    Matrice<-u%*%t(Y_l) #Matrice de taille d*n/L
+    Z<-matrix(rnorm(d*n/L), nrow=d) #Matrice de taille d*n/L
+    Z_scalaire_u<-t(Z)%*%u #Vecteur de taille n/L
+    Matrice<-Matrice + Z - u%*%t(Z_scalaire_u)
+    Matrice<-exp(Sd*Matrice)
+    Moyenne<-colMeans(Matrice) - K #Vecteur de taille n/L
+    Vecteur<-pmax(Moyenne, 0)
+    S<-S+mean(Vecteur)/L
+    #On ajoute la variance de Y(l) à notre vecteur    
+    Variance[i]<-var(Vecteur)
+  }
+  return(data.frame(value=S, variance=mean(Variance)))
+}
+```
+
+On obtient le résultat suivant :
+
+```{r, echo=FALSE}
+p_n_u = p_hat_strat(N)
+print(p_n_u)
+```
+
+#### Question 11
+
+Le temps de notre algorithme est de :
+
+```{r, echo=FALSE}
+print(microbenchmark(p_hat_strat(N)))
+```
+
+Avec un rapport de coût de calcul de :
+
+```{r}
+tme = microbenchmark(p_hat(N), p_hat_strat(N))
+C1<-mean(tme$time[tme$expr=="p_hat(N)"]) #Cout de calcul pour p_hat
+C2<-mean(tme$time[tme$expr=="p_hat_strat(N)"]) #Cout de calcul pour p_hat_strat
+```
+
+```{r, echo=FALSE}
+print(C1/C2)
+```
+
+Et ainsi une efficacité relative de :
+
+```{r, echo=FALSE}
+efficacite_relative<-C1*(p_n_hat$variance)/(C2*p_n_u$variance)
+print(efficacite_relative)
+```
+
+Le coût de calcul de l'estimateur stratifié est plus faible que l'estimateur de Monte Carlo classique. De plus, on a un rapport des variances de environ autour de 5 c'est pourquoi l'efficacite relative est plus grande que 1. On en conclut que la méthode de stratification est plus efficace que la méthode de Monte Carlo classique.
+
+**Bilan :** les méthodes qui ont été présenté dans ce projet sont de bonnes techniques de réduction de variance et sont à priori très efficace pour estimer diverses quantités. On note en particulier la très grande efficacité relative de la méthode d'échantillonnage préférentiel qui était environ de l'ordre de $10^{4}$ ce qui est "énorme" comparé aux autres efficacités relatives que nous avons pu rencontrer dans le second exercice.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
