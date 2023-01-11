@@ -7,6 +7,8 @@ Semester 1
 
 Semester 2
 
+-Numerical methods
+
 -Statistical learning
 
 -C++
